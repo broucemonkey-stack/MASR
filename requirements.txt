@@ -1,0 +1,4 @@
+streamlit>=1.37
+pandas>=2.2
+pillow>=10
+pytest>=8

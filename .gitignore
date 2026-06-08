@@ -1,0 +1,9 @@
+__pycache__/
+.pytest_cache/
+.pytest_tmp/
+.streamlit/
+data/
+runtime_*/
+test_artifacts/
+tmp_pytest_*/
+*.pyc
