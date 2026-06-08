@@ -1,5 +1,5 @@
-Xshell传输
-data
+Xshell传输/
+data/
 
 __pycache__/
 .pytest_cache/
