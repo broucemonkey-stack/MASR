@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from .models import Experiment, ImageRecord, Project
+from .utils import sanitize_filename, slugify, unique_filename  # re-exported for backward compatibility
 
 
 class AblationStore:
@@ -143,6 +143,27 @@ class AblationStore:
             return None
         return path.read_text(encoding="utf-8", errors="replace")
 
+    def save_log_file(
+        self,
+        project_id: str,
+        experiment_id: str,
+        original_name: str,
+        content: bytes,
+    ) -> tuple[str, str]:
+        exp_dir = self.experiment_dir(project_id, experiment_id)
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        filename = "train.log"
+        (exp_dir / filename).write_bytes(content)
+        return filename, sanitize_filename(original_name, default="train.log")
+
+    def read_log_text(self, project_id: str, experiment: Experiment) -> str | None:
+        if not experiment.log_file:
+            return None
+        path = self.experiment_dir(project_id, experiment.id) / experiment.log_file
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+
     def save_image_file(
         self,
         project_id: str,
@@ -155,7 +176,12 @@ class AblationStore:
         images_dir = self.experiment_dir(project_id, experiment_id) / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
         filename = unique_filename(images_dir, sanitize_filename(original_name, default="image.png"))
-        (images_dir / filename).write_bytes(content)
+        image_path = images_dir / filename
+        image_path.write_bytes(content)
+        # Generate thumbnail (fire-and-forget; failure is non-fatal)
+        from .image_utils import generate_thumbnail
+
+        generate_thumbnail(image_path)
         return ImageRecord(
             filename=filename,
             label=label.strip() or "result",
@@ -165,6 +191,11 @@ class AblationStore:
 
     def image_path(self, project_id: str, experiment_id: str, image: ImageRecord) -> Path:
         return self.experiment_dir(project_id, experiment_id) / "images" / image.filename
+
+    def thumbnail_path(self, project_id: str, experiment_id: str, image: ImageRecord) -> Path:
+        from .image_utils import thumbnail_path as _tp
+
+        return _tp(self.experiment_dir(project_id, experiment_id) / "images", image.filename)
 
     def project_dir(self, project_id: str) -> Path:
         return self.projects_root / project_id
@@ -191,35 +222,6 @@ def make_id(name: str) -> str:
     return f"{stem}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
 
 
-def slugify(value: str) -> str:
-    value = value.strip().lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    value = re.sub(r"-+", "-", value).strip("-")
-    return value[:48]
-
-
-def sanitize_filename(filename: str, default: str = "file") -> str:
-    name = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    name = re.sub(r"\s+", "_", name)
-    name = re.sub(r"_+", "_", name).strip("._ ")
-    if not name or name in {".", ".."}:
-        name = default
-    if Path(name).stem.upper() in _WINDOWS_RESERVED_NAMES:
-        name = f"_{name}"
-    return name[:160]
-
-
-def unique_filename(directory: Path, filename: str) -> str:
-    candidate = filename
-    stem = Path(filename).stem or "file"
-    suffix = Path(filename).suffix
-    index = 2
-    while (directory / candidate).exists():
-        candidate = f"{stem}_{index}{suffix}"
-        index += 1
-    return candidate
-
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -240,27 +242,4 @@ def _assert_inside(target: Path, root: Path) -> None:
         raise ValueError(f"Refusing to remove path outside storage root: {target}")
 
 
-_WINDOWS_RESERVED_NAMES = {
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    "COM1",
-    "COM2",
-    "COM3",
-    "COM4",
-    "COM5",
-    "COM6",
-    "COM7",
-    "COM8",
-    "COM9",
-    "LPT1",
-    "LPT2",
-    "LPT3",
-    "LPT4",
-    "LPT5",
-    "LPT6",
-    "LPT7",
-    "LPT8",
-    "LPT9",
-}
+

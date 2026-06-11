@@ -1,34 +1,107 @@
 from __future__ import annotations
 
 import ast
+from abc import ABC, abstractmethod
 from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# Plugin infrastructure
+# ---------------------------------------------------------------------------
+
+
+class ConfigParser(ABC):
+    """Abstract base class for configuration file parsers.
+
+    Subclass and register via :func:`register_parser` to add support for
+    new config formats.
+    """
+
+    @abstractmethod
+    def parse(self, text: str) -> dict[str, Any]:
+        """Parse configuration *text* into a flat key/value dict.
+
+        Raises:
+            SyntaxError: if *text* is syntactically invalid for this parser.
+        """
+        ...
+
+
+_registry: list[ConfigParser] = []
+
+
+def register_parser(parser: ConfigParser) -> None:
+    """Register a configuration parser for auto-detection.
+
+    Parsers are tried in registration order; the first successful result
+    is returned by :func:`extract_params_from_config_text`.
+    """
+    _registry.append(parser)
+
+
+def get_registered_parsers() -> list[ConfigParser]:
+    """Return a copy of the current parser registry."""
+    return list(_registry)
+
+
+# ---------------------------------------------------------------------------
+# MMEngine-style Python config parser
+# ---------------------------------------------------------------------------
+
+
+class MMEngineConfigParser(ConfigParser):
+    """Parser for MMEngine / OpenMMLab Python configuration files.
+
+    Safely reads Python syntax with ``ast`` and evaluates only literals
+    plus ``dict(...)`` calls.  It never imports or executes the uploaded
+    config.
+    """
+
+    def parse(self, text: str) -> dict[str, Any]:
+        tree = ast.parse(text)
+        assignments: dict[str, Any] = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assignments[target.id] = _safe_eval(node.value)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                assignments[node.target.id] = _safe_eval(node.value)
+
+        flattened: dict[str, Any] = {}
+        for key, value in assignments.items():
+            _flatten_value(key, value, flattened)
+
+        # Append human-readable pipeline summaries.
+        flattened.update(extract_pipeline_summaries(flattened))
+        return flattened
+
+
+# ---------------------------------------------------------------------------
+# Public entry point (delegates to registered parsers)
+# ---------------------------------------------------------------------------
 
 
 def extract_params_from_config_text(text: str) -> dict[str, Any]:
     """Extract flattened key/value parameters from a Python config file.
 
-    The parser is intentionally safe: it reads Python syntax with ``ast`` and
-    evaluates only literals plus ``dict(...)`` calls commonly used by MMEngine
-    configs. It never imports or executes the uploaded config.
+    Delegates to registered :class:`ConfigParser` instances in order;
+    returns the result from the first parser that succeeds.
+
+    The parser is intentionally safe: it never imports or executes the
+    uploaded config.
     """
+    errors: list[SyntaxError] = []
+    for parser in _registry:
+        try:
+            return parser.parse(text)
+        except SyntaxError as exc:
+            errors.append(exc)
+            continue
 
-    tree = ast.parse(text)
-    assignments: dict[str, Any] = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    assignments[target.id] = _safe_eval(node.value)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            assignments[node.target.id] = _safe_eval(node.value)
-
-    flattened: dict[str, Any] = {}
-    for key, value in assignments.items():
-        _flatten_value(key, value, flattened)
-
-    # Append human-readable pipeline summaries.
-    flattened.update(extract_pipeline_summaries(flattened))
-    return flattened
+    if errors:
+        raise errors[0]
+    return {}
 
 
 def pick_default_param_keys(keys: list[str], limit: int = 12) -> list[str]:
@@ -186,3 +259,9 @@ def _flatten_value(prefix: str, value: Any, output: dict[str, Any]) -> None:
 
 def _is_scalar_sequence(value: list[Any] | tuple[Any, ...]) -> bool:
     return all(not isinstance(item, (dict, list, tuple)) for item in value)
+
+
+# ---------------------------------------------------------------------------
+# Auto-register built-in parser
+# ---------------------------------------------------------------------------
+register_parser(MMEngineConfigParser())

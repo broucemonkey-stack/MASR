@@ -108,6 +108,37 @@ def test_sanitize_filename_and_unique_filename():
     assert unique_filename(directory, "plot.png") == "plot_2.png"
 
 
+def test_log_file_save_and_read():
+    store = AblationStore(_fresh_root())
+    project = store.create_project("Project")
+    experiment = store.create_experiment(project.id, Experiment(id="", name="Test"))
+
+    filename, original_name = store.save_log_file(
+        project.id,
+        experiment.id,
+        "training run.log",
+        b"Epoch 1: loss=0.5\nEpoch 2: loss=0.3\n",
+    )
+    experiment.log_file = filename
+    experiment.log_original_name = original_name
+    store.save_experiment(project.id, experiment)
+
+    loaded = store.get_experiment(project.id, experiment.id)
+    assert loaded is not None
+    assert loaded.log_file == filename
+    assert loaded.log_original_name == original_name
+
+    content = store.read_log_text(project.id, loaded)
+    assert content == "Epoch 1: loss=0.5\nEpoch 2: loss=0.3\n"
+
+
+def test_read_log_text_returns_none_when_no_log():
+    store = AblationStore(_fresh_root())
+    project = store.create_project("Project")
+    experiment = store.create_experiment(project.id, Experiment(id="", name="Test"))
+    assert store.read_log_text(project.id, experiment) is None
+
+
 def _fresh_root() -> Path:
     root = Path("test_artifacts") / uuid4().hex
     root.mkdir(parents=True, exist_ok=False)

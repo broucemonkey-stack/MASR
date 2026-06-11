@@ -277,3 +277,46 @@ def test_extract_pipeline_summaries():
         "LoadImageFromFile → ResizeEdge → CenterCrop → PackClsInputs"
     )
     assert "val_pipeline_summary" not in summaries
+
+
+# ---------------------------------------------------------------------------
+# ConfigParser registry
+# ---------------------------------------------------------------------------
+
+
+def test_mmengine_parser_is_registered_by_default():
+    """The built-in MMEngineConfigParser is auto-registered at import time."""
+    from masr.config_parser import MMEngineConfigParser, get_registered_parsers
+
+    parsers = get_registered_parsers()
+    types = [type(p) for p in parsers]
+    assert MMEngineConfigParser in types
+
+
+def test_register_custom_parser():
+    """A custom ConfigParser can be registered and appears in the registry."""
+    from masr.config_parser import ConfigParser, register_parser, get_registered_parsers
+
+    class FakeParser(ConfigParser):
+        def parse(self, text):
+            return {"custom_key": text.strip()}
+
+    count_before = len(get_registered_parsers())
+    register_parser(FakeParser())
+    assert len(get_registered_parsers()) == count_before + 1
+    # Verify the newly registered parser is of the correct type.
+    assert isinstance(get_registered_parsers()[-1], FakeParser)
+
+
+def test_extract_params_fallback_uses_next_parser():
+    """When one parser raises SyntaxError, the next registered parser is tried.
+
+    The auto-registered MMEngineConfigParser raises SyntaxError on invalid
+    Python; a previously registered custom parser (from
+    ``test_register_custom_parser``) handles the text instead.
+    """
+    from masr.config_parser import extract_params_from_config_text
+
+    result = extract_params_from_config_text("not valid python {{{")
+    # MMEngine fails → custom FakeParser succeeds, returning ``custom_key``.
+    assert "custom_key" in result

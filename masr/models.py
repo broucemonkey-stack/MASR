@@ -12,8 +12,14 @@ class Project:
     created_at: str = ""
     updated_at: str = ""
 
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("Project name must not be empty")
+
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "Project":
+    def from_dict(cls, payload: dict[str, Any], max_depth: int = 10, _depth: int = 0) -> "Project":
+        if _depth > max_depth:
+            raise ValueError(f"Maximum nesting depth ({max_depth}) exceeded in Project.from_dict")
         return cls(
             id=str(payload.get("id", "")),
             name=str(payload.get("name", "")),
@@ -39,8 +45,14 @@ class ImageRecord:
     note: str = ""
     uploaded_at: str = ""
 
+    def __post_init__(self) -> None:
+        if not self.filename.strip():
+            raise ValueError("Image filename must not be empty")
+
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "ImageRecord":
+    def from_dict(cls, payload: dict[str, Any], max_depth: int = 10, _depth: int = 0) -> "ImageRecord":
+        if _depth > max_depth:
+            raise ValueError(f"Maximum nesting depth ({max_depth}) exceeded in ImageRecord.from_dict")
         return cls(
             filename=str(payload.get("filename", "")),
             label=str(payload.get("label", "result") or "result"),
@@ -72,11 +84,19 @@ class Experiment:
     images: list[ImageRecord] = field(default_factory=list)
     config_file: str | None = None
     config_original_name: str | None = None
+    log_file: str | None = None
+    log_original_name: str | None = None
     created_at: str = ""
     updated_at: str = ""
 
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("Experiment name must not be empty")
+
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "Experiment":
+    def from_dict(cls, payload: dict[str, Any], max_depth: int = 10, _depth: int = 0) -> "Experiment":
+        if _depth > max_depth:
+            raise ValueError(f"Maximum nesting depth ({max_depth}) exceeded in Experiment.from_dict")
         return cls(
             id=str(payload.get("id", "")),
             name=str(payload.get("name", "")),
@@ -88,9 +108,11 @@ class Experiment:
             seed=str(payload.get("seed", "")),
             params=dict(payload.get("params") or {}),
             metrics=dict(payload.get("metrics") or {}),
-            images=[ImageRecord.from_dict(item) for item in payload.get("images", [])],
+            images=[ImageRecord.from_dict(item, max_depth=max_depth, _depth=_depth + 1) for item in payload.get("images", [])],
             config_file=payload.get("config_file"),
             config_original_name=payload.get("config_original_name"),
+            log_file=payload.get("log_file"),
+            log_original_name=payload.get("log_original_name"),
             created_at=str(payload.get("created_at", "")),
             updated_at=str(payload.get("updated_at", "")),
         )
@@ -110,6 +132,8 @@ class Experiment:
             "images": [image.to_dict() for image in self.images],
             "config_file": self.config_file,
             "config_original_name": self.config_original_name,
+            "log_file": self.log_file,
+            "log_original_name": self.log_original_name,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
