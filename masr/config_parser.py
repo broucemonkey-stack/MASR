@@ -25,27 +25,66 @@ def extract_params_from_config_text(text: str) -> dict[str, Any]:
     flattened: dict[str, Any] = {}
     for key, value in assignments.items():
         _flatten_value(key, value, flattened)
+
+    # Append human-readable pipeline summaries.
+    flattened.update(extract_pipeline_summaries(flattened))
     return flattened
 
 
 def pick_default_param_keys(keys: list[str], limit: int = 12) -> list[str]:
+    """Return a curated subset of config keys for display.
+
+    Priority order (highest first)::
+
+        1. Learning rate      — optim_wrapper.optimizer.lr / lr / …
+        2. Optimizer           — optim_wrapper.optimizer.type
+        3. LR scheduler        — param_scheduler …
+        4. Train pipeline      — train_pipeline / train_dataloader …
+        5. Test pipeline       — test_pipeline / val_pipeline / test_dataloader …
+        6. Other common keys   — model, batch_size, max_epochs, …
+    """
     priority = [
+        # ---- 学习率 (learning rate) ----
+        "optim_wrapper.optimizer.lr",
+        "lr",
+        "learning_rate",
+        "base_lr",
+        # ---- 优化器 (optimizer) ----
+        "optim_wrapper.optimizer.type",
+        "optimizer.type",
+        "optimizer",
+        "optim_wrapper.optimizer.weight_decay",
+        # ---- 学习率衰减 / 调度器 (LR scheduler / decay) ----
+        "param_scheduler.type",
+        "param_scheduler",
+        "lr_scheduler",
+        "lr_decay",
+        "lr_schedule",
+        # ---- train_pipeline ----
+        "train_pipeline",
+        "train_pipeline_summary",
+        "train_dataloader.dataset.pipeline",
+        "train_dataloader.batch_size",
+        # ---- test_pipeline ----
+        "test_pipeline",
+        "test_pipeline_summary",
+        "val_pipeline",
+        "val_pipeline_summary",
+        "test_dataloader.dataset.pipeline",
+        "val_dataloader.dataset.pipeline",
+        "test_dataloader.batch_size",
+        "val_dataloader.batch_size",
+        # ---- 通用 / 其他常用 ----
         "dataset_type",
         "model.type",
         "model.backbone.type",
         "model.backbone.depth",
+        "model.backbone.arch",
         "model.head.type",
         "model.head.num_classes",
         "model.head.loss.type",
-        "optim_wrapper.optimizer.type",
-        "optim_wrapper.optimizer.lr",
-        "optim_wrapper.optimizer.weight_decay",
         "train_cfg.max_epochs",
         "train_cfg.val_interval",
-        "train_dataloader.batch_size",
-        "val_dataloader.batch_size",
-        "test_dataloader.batch_size",
-        "param_scheduler.type",
         "work_dir",
     ]
     selected = [key for key in priority if key in keys]
@@ -55,6 +94,35 @@ def pick_default_param_keys(keys: list[str], limit: int = 12) -> list[str]:
         if key not in selected:
             selected.append(key)
     return selected
+
+
+def extract_pipeline_summaries(params: dict[str, Any]) -> dict[str, str]:
+    """Post-process extracted config params and create human-readable pipeline
+    summaries.
+
+    MMEngine configs often define pipelines as lists of ``dict(type=…)``
+    calls.  After ``extract_params_from_config_text`` each step becomes
+    ``train_pipeline[0].type``, ``train_pipeline[1].type``, … which is
+    verbose.  This helper collects those into compact arrow-chain strings::
+
+        {"train_pipeline_summary": "LoadImageFromFile → RandomResizedCrop → …"}
+    """
+    summaries: dict[str, str] = {}
+    for candidate in ("train_pipeline", "test_pipeline", "val_pipeline"):
+        prefix = candidate + "["
+        indices: dict[int, str] = {}
+        for key, value in params.items():
+            if key.startswith(prefix) and key.endswith(".type"):
+                try:
+                    idx = int(key[len(prefix) : key.index("]")])
+                except (ValueError, IndexError):
+                    continue
+                indices[idx] = str(value)
+        if indices:
+            chain = " → ".join(v for _, v in sorted(indices.items()))
+            summaries[f"{candidate}_summary"] = chain
+
+    return summaries
 
 
 def _safe_eval(node: ast.AST | None) -> Any:

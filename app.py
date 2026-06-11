@@ -17,7 +17,7 @@ from masr.filters import (
     metric_range,
 )
 from masr.models import Experiment
-from masr.parsing import format_key_value_lines, parse_key_value_lines, parse_tags
+from masr.parsing import format_key_value_lines, parse_key_value_lines, parse_metrics_text, parse_tags
 from masr.storage import AblationStore
 
 
@@ -242,7 +242,7 @@ def render_experiment_form(store: AblationStore, project_id: str) -> None:
             strategy=strategy.strip(),
             seed=seed.strip(),
             params={**auto_params, **manual_params},
-            metrics=parse_key_value_lines(metrics_text),
+            metrics=parse_metrics_text(metrics_text),
         )
         try:
             experiment = store.create_experiment(project_id, experiment)
@@ -575,7 +575,7 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
         experiment.strategy = strategy.strip()
         experiment.seed = seed.strip()
         experiment.params = params
-        experiment.metrics = parse_key_value_lines(metrics_text)
+        experiment.metrics = parse_metrics_text(metrics_text)
 
         if config_file is not None:
             filename, original_name = store.save_config_file(
@@ -664,6 +664,24 @@ def render_maintenance_page(store: AblationStore, project_id: str) -> None:
         st.rerun()
 
 
+def _clean_number(value: Any) -> str:
+    """Convert a value to a clean string with no trailing zeros.
+
+    Floats use :g formatting (strips trailing zeros), ints stay as-is,
+    everything else is stringified.
+    """
+    if isinstance(value, float):
+        # :g removes trailing zeros and switches to scientific for tiny/large numbers
+        return f"{value:g}"
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def flatten_experiments(
     experiments: list[Experiment],
     param_keys: list[str] | None = None,
@@ -679,7 +697,7 @@ def flatten_experiments(
             "模型": experiment.model,
         }
         for key in metric_keys:
-            row[f"指标:{key}"] = experiment.metrics.get(key, "")
+            row[f"指标:{key}"] = _clean_number(experiment.metrics.get(key, ""))
         row.update({
             "策略": experiment.strategy,
             "随机种子": experiment.seed,
@@ -687,7 +705,7 @@ def flatten_experiments(
             "更新时间": experiment.updated_at,
         })
         for key in param_keys:
-            row[f"参数:{key}"] = experiment.params.get(key, "")
+            row[f"参数:{key}"] = _clean_number(experiment.params.get(key, ""))
         rows.append(row)
     return rows
 

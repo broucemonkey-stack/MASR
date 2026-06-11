@@ -95,6 +95,8 @@ def to_float(value: Any) -> float | None:
     try:
         if value is None or value == "":
             return None
+        if isinstance(value, str):
+            value = value.strip().rstrip("%")
         return float(value)
     except (TypeError, ValueError):
         return None
