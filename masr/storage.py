@@ -156,10 +156,31 @@ class AblationStore:
         (exp_dir / filename).write_bytes(content)
         return filename, sanitize_filename(original_name, default="train.log")
 
+    def save_test_log_file(
+        self,
+        project_id: str,
+        experiment_id: str,
+        original_name: str,
+        content: bytes,
+    ) -> tuple[str, str]:
+        exp_dir = self.experiment_dir(project_id, experiment_id)
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        filename = "test.log"
+        (exp_dir / filename).write_bytes(content)
+        return filename, sanitize_filename(original_name, default="test.log")
+
     def read_log_text(self, project_id: str, experiment: Experiment) -> str | None:
         if not experiment.log_file:
             return None
         path = self.experiment_dir(project_id, experiment.id) / experiment.log_file
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+
+    def read_test_log_text(self, project_id: str, experiment: Experiment) -> str | None:
+        if not experiment.test_log_file:
+            return None
+        path = self.experiment_dir(project_id, experiment.id) / experiment.test_log_file
         if not path.exists():
             return None
         return path.read_text(encoding="utf-8", errors="replace")

@@ -37,22 +37,22 @@ def flatten_experiments(
 ) -> list[dict[str, Any]]:
     """Flatten a list of Experiment objects into rows for a DataFrame."""
     param_keys = param_keys if param_keys is not None else collect_dynamic_keys(experiments, "params")
-    metric_keys = metric_keys if metric_keys is not None else collect_dynamic_keys(experiments, "metrics")
+    if metric_keys is None:
+        metric_keys = collect_dynamic_keys(experiments, "metrics")
+        metric_keys.extend(collect_dynamic_keys(experiments, "test_metrics"))
     rows: list[dict[str, Any]] = []
     for experiment in experiments:
         row: dict[str, Any] = {
             "实验名称": experiment.name,
+            "描述": experiment.description,
             "数据集": experiment.dataset,
             "模型": experiment.model,
         }
         for key in metric_keys:
             row[f"指标:{key}"] = _clean_number(experiment.metrics.get(key, ""))
-        row.update({
-            "策略": experiment.strategy,
-            "随机种子": experiment.seed,
-            "标签": ", ".join(experiment.tags),
-            "更新时间": experiment.updated_at,
-        })
+        for key in sorted(experiment.test_metrics):
+            row[f"指标:{key}"] = _clean_number(experiment.test_metrics[key])
+        row["更新时间"] = experiment.updated_at
         for key in param_keys:
             row[f"参数:{key}"] = _clean_number(experiment.params.get(key, ""))
         rows.append(row)
@@ -62,7 +62,7 @@ def flatten_experiments(
 def experiment_label(experiment: Experiment) -> str:
     """Build a human-readable label for an experiment."""
     parts = [experiment.name]
-    detail = " / ".join(part for part in [experiment.dataset, experiment.model, experiment.strategy] if part)
+    detail = " / ".join(part for part in [experiment.dataset, experiment.model] if part)
     if detail:
         parts.append(detail)
     return " · ".join(parts)

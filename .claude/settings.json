@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/Research/projects/MASE/Xhsell传输/ConvnextTiny/**)"
+    ]
+  }
+}

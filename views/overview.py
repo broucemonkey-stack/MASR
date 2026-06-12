@@ -15,16 +15,14 @@ def render_overview(store: AblationStore, project_id: str) -> None:
     experiments = store.list_experiments(project_id)
     datasets = collect_values(experiments, "dataset")
     models = collect_values(experiments, "model")
-    strategies = collect_values(experiments, "strategy")
     param_keys = pick_default_param_keys(collect_dynamic_keys(experiments, "params"))
     metric_keys = collect_dynamic_keys(experiments, "metrics")
 
-    cols = st.columns(5)
+    cols = st.columns(4)
     cols[0].metric("实验数", len(experiments))
     cols[1].metric("数据集", len(datasets))
     cols[2].metric("模型", len(models))
-    cols[3].metric("策略", len(strategies))
-    cols[4].metric("指标", len(metric_keys))
+    cols[3].metric("指标", len(metric_keys))
 
     st.subheader("最近实验")
     if experiments:

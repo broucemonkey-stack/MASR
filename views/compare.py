@@ -16,7 +16,7 @@ from masr.filters import (
 )
 from masr.models import Experiment
 from masr.storage import AblationStore
-from components.comparison import render_comparison_table, render_config_view, render_image_grid, render_log_view
+from components.comparison import render_comparison_table, render_config_view, render_curve_view, render_image_grid, render_log_view
 from utils.display import experiment_label, flatten_experiments
 
 # Session-state keys used by the filter widgets — cleared on reset.
@@ -71,6 +71,7 @@ def render_compare_page(store: AblationStore, project_id: str) -> None:
         return
 
     render_comparison_table(selected, display_param_keys, display_metric_keys)
+    render_curve_view(store, project_id, selected)
     render_image_grid(store, project_id, selected)
     render_config_view(store, project_id, selected)
     render_log_view(store, project_id, selected)

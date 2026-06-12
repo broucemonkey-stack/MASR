@@ -320,3 +320,193 @@ def test_extract_params_fallback_uses_next_parser():
     result = extract_params_from_config_text("not valid python {{{")
     # MMEngine fails → custom FakeParser succeeds, returning ``custom_key``.
     assert "custom_key" in result
+
+
+# ---------------------------------------------------------------------------
+# Log parser (extract_best_metrics)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_best_metrics_from_mmengine_log():
+    """Parse MMEngine-style training log with Epoch(val) markers and timestamps."""
+    from masr.log_parser import extract_best_metrics
+
+    log = """
+2024/01/15 10:30:00 - mmengine - INFO - Epoch(val) [1][50/100]  lr: 0.001  loss: 0.5
+2024/01/15 10:31:00 - mmengine - INFO - accuracy/top1: 68.5  single-label/precision: 62.2  single-label/recall: 56.6  single-label/f1-score: 56.5
+2024/01/15 10:32:00 - mmengine - INFO - Epoch(val) [2][50/100]  lr: 0.0009  loss: 0.3
+2024/01/15 10:33:00 - mmengine - INFO - accuracy/top1: 78.0  single-label/precision: 72.1  single-label/recall: 66.3  single-label/f1-score: 69.0
+"""
+    best, epoch, summary = extract_best_metrics(log)
+    assert epoch == 2
+    # Epoch(val) → "验证集" prefix
+    assert best["验证集accuracy"] == 78.0
+    assert best["验证集precision"] == 72.1
+    assert best["验证集recall"] == 66.3
+    assert best["验证集f1"] == 69.0
+    assert "Epoch 2" in summary
+
+
+def test_extract_best_metrics_simple_kv_format():
+    """Parse colon-separated metric lines with 'val' group prefix."""
+    from masr.log_parser import extract_best_metrics
+
+    log = """
+Epoch 1/10
+val/accuracy: 0.72  val/loss: 0.35
+Epoch 2/10
+val/accuracy: 0.85  val/loss: 0.22
+Epoch 3/10
+val/accuracy: 0.81  val/loss: 0.19
+"""
+    best, epoch, summary = extract_best_metrics(log)
+    assert epoch == 2  # highest accuracy
+    # "val" prefix normalised to Chinese "验证集"
+    assert best["验证集accuracy"] == 0.85
+    assert best["验证集loss"] == 0.22
+
+
+def test_extract_best_metrics_target_loss():
+    """When target_metric is specified, find best epoch by that metric."""
+    from masr.log_parser import extract_best_metrics
+
+    log = """
+Epoch 1/10
+val/accuracy: 0.72  val/loss: 0.35
+Epoch 2/10
+val/accuracy: 0.85  val/loss: 0.22
+Epoch 3/10
+val/accuracy: 0.81  val/loss: 0.19
+"""
+    best, epoch, summary = extract_best_metrics(log, target_metric="val/loss")
+    assert epoch == 3  # lowest loss
+    assert best["验证集loss"] == 0.19
+
+
+def test_extract_best_metrics_ignores_config_dump():
+    """Config dumps (key = value) should be ignored; only colon metrics count."""
+    from masr.log_parser import extract_best_metrics
+
+    log = """
+backbone.type = ResNet
+optimizer.lr = 0.001
+Epoch 1
+accuracy: 72.5  loss: 0.35
+train_cfg.max_epochs = 100
+Epoch 2
+accuracy: 85.0  loss: 0.22
+"""
+    best, epoch, summary = extract_best_metrics(log)
+    assert epoch == 2  # highest accuracy
+    assert best["accuracy"] == 85.0
+    assert best["loss"] == 0.22
+    # Config keys should NOT appear
+    assert "backbone.type" not in best
+    assert "optimizer.lr" not in best
+
+
+def test_extract_best_metrics_filters_tensor_and_timing():
+    """Confusion matrix dumps and data_time/time should be filtered out."""
+    from masr.log_parser import extract_best_metrics
+
+    log = """\
+2026/06/11 15:33:35 - mmengine - INFO - Epoch(val) [141][66/66]    accuracy/top1: 66.2536  single-label/precision: 62.4004  single-label/recall: 61.9547  single-label/f1-score: 60.8335  confusion_matrix/result:
+tensor([[ 61,  10,   5,   3,   0,   0],
+        [ 24,  19,  19,   2,   1,   0],
+        [  5,  11,  58,  15,   0,   0],
+        [  4,   4,  74, 269,  25,   0],
+        [  0,   0,   2,  84, 207,  15],
+        [  0,   0,   3,   2,  46,  81]])
+  data_time: 0.0023  time: 0.0816"""
+    best, epoch, summary = extract_best_metrics(log)
+    assert epoch == 141
+    # Epoch(val) → "验证集" prefix
+    assert best["验证集accuracy"] == 66.2536
+    assert best["验证集precision"] == 62.4004
+    assert best["验证集recall"] == 61.9547
+    assert best["验证集f1"] == 60.8335
+    # Non-metric keys must be absent.
+    assert "data_time" not in best
+    assert "time" not in best
+    assert "confusion_matrix" not in best
+
+
+def test_extract_best_metrics_no_eval_blocks():
+    """Return empty dict when no evaluation blocks are found."""
+    from masr.log_parser import extract_best_metrics
+
+    best, epoch, summary = extract_best_metrics("just some random text\nnothing here\n")
+    assert best == {}
+    assert epoch == 0
+
+
+# ---------------------------------------------------------------------------
+# Log parser (extract_epoch_curves)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_epoch_curves_from_mmengine_log():
+    """Extract per-epoch validation metrics from MMEngine training log."""
+    from masr.log_parser import extract_epoch_curves
+
+    log = """
+2024/01/15 10:30:00 - mmengine - INFO - Epoch(val) [1][50/100]    accuracy/top1: 12.30  single-label/precision: 3.68  single-label/recall: 16.71  single-label/f1-score: 4.94
+2024/01/15 10:31:00 - mmengine - INFO - Epoch(val) [2][50/100]    accuracy/top1: 45.00  single-label/precision: 15.00  single-label/recall: 35.00  single-label/f1-score: 21.00
+2024/01/15 10:32:00 - mmengine - INFO - Epoch(val) [3][50/100]    accuracy/top1: 68.50  single-label/precision: 62.25  single-label/recall: 56.60  single-label/f1-score: 59.20
+"""
+    curves = extract_epoch_curves(log)
+
+    assert curves["epoch"] == [1, 2, 3]
+    assert len(curves["验证集accuracy"]) == 3
+    assert curves["验证集accuracy"] == [12.30, 45.00, 68.50]
+    assert curves["验证集f1"] == [4.94, 21.00, 59.20]
+    assert curves["验证集precision"] == [3.68, 15.00, 62.25]
+    assert curves["验证集recall"] == [16.71, 35.00, 56.60]
+
+
+def test_extract_epoch_curves_empty_log():
+    """Return empty dict for logs without Epoch(val) lines."""
+    from masr.log_parser import extract_epoch_curves
+
+    curves = extract_epoch_curves("just some random text\nnothing here\n")
+    assert curves == {}
+
+
+def test_extract_epoch_curves_filters_sporadic_metrics():
+    """Only keep metrics that appear in ≥50% of epochs."""
+    from masr.log_parser import extract_epoch_curves
+
+    log = """
+2024/01/15 10:30:00 - mmengine - INFO - Epoch(val) [1][50/100]    accuracy/top1: 12.30  single-label/f1-score: 4.94
+2024/01/15 10:31:00 - mmengine - INFO - Epoch(val) [2][50/100]    accuracy/top1: 45.00  single-label/f1-score: 21.00  single-label/precision: 15.00
+2024/01/15 10:32:00 - mmengine - INFO - Epoch(val) [3][50/100]    accuracy/top1: 68.50  single-label/f1-score: 59.20
+"""
+    curves = extract_epoch_curves(log)
+
+    # accuracy and f1 appear in 3/3 epochs → kept; precision only in 1/3 → dropped
+    assert "验证集accuracy" in curves
+    assert "验证集f1" in curves
+    assert "验证集precision" not in curves
+
+
+def test_extract_epoch_curves_includes_train_loss():
+    """Extract training loss from Epoch(train) lines alongside val metrics."""
+    from masr.log_parser import extract_epoch_curves
+
+    log = """
+2024/01/15 10:30:00 - mmengine - INFO - Epoch(train) [1][50/100]  loss: 1.1556
+2024/01/15 10:31:00 - mmengine - INFO - Epoch(val) [1][50/100]    accuracy/top1: 12.30  single-label/f1-score: 4.94
+2024/01/15 10:32:00 - mmengine - INFO - Epoch(train) [2][50/100]  loss: 0.8923
+2024/01/15 10:33:00 - mmengine - INFO - Epoch(val) [2][50/100]    accuracy/top1: 45.00  single-label/f1-score: 21.00
+2024/01/15 10:34:00 - mmengine - INFO - Epoch(train) [3][50/100]  loss: 0.5432
+2024/01/15 10:35:00 - mmengine - INFO - Epoch(val) [3][50/100]    accuracy/top1: 68.50  single-label/f1-score: 59.20
+"""
+    curves = extract_epoch_curves(log)
+
+    assert curves["epoch"] == [1, 2, 3]
+    assert "训练集loss" in curves
+    assert "验证集accuracy" in curves
+    assert "验证集f1" in curves
+    assert curves["训练集loss"] == [1.1556, 0.8923, 0.5432]
+    assert curves["验证集accuracy"] == [12.30, 45.00, 68.50]
+    assert curves["验证集f1"] == [4.94, 21.00, 59.20]

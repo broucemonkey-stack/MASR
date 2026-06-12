@@ -13,9 +13,12 @@ from typing import Any
 # Keys may contain Chinese characters, letters, digits, hyphens, underscores,
 # dots, and slashes.  Values are integer or decimal numbers, optionally
 # followed by a percent sign.
-_METRIC_TOKEN_RE = re.compile(
+METRIC_TOKEN_RE = re.compile(
     r"([^\s:]+)\s*:\s*([0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\s*%?)"
 )
+
+# Backward-compatible alias.
+_METRIC_TOKEN_RE = METRIC_TOKEN_RE
 
 # Normalised metric-name *stems* — when a sub-key ends with one of these
 # (ignoring case / underscore-vs-hyphen) we recognise it as a metric.
@@ -67,6 +70,16 @@ _GROUP_PREFIXES: list[str] = sorted(
     key=len,
     reverse=True,
 )
+
+# Normalise English group prefixes to their Chinese equivalents.
+_GROUP_NORMALIZE: dict[str, str] = {
+    "val": "验证集",
+    "validation": "验证集",
+    "test": "测试集",
+    "testing": "测试集",
+    "train": "训练集",
+    "training": "训练集",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +135,8 @@ def parse_metric_line(text: str, default_group: str = "") -> dict[str, Any]:
         return {}
 
     group = default_group or _detect_group_prefix(matches[0][0])
+    if not default_group:
+        group = _GROUP_NORMALIZE.get(group, group)
 
     result: dict[str, Any] = {}
     for raw_key, raw_value in matches:
@@ -204,8 +219,14 @@ def _detect_group_prefix(first_key: str) -> str:
     for stem in sorted(_METRIC_STEMS, key=len, reverse=True):
         stem_norm = stem.replace("_", "-")
         idx = key_lower.find(stem_norm)
-        if idx > 0:
-            return first_key[:idx].rstrip("/-_")
+        if idx <= 0:
+            continue
+        prefix = first_key[:idx].rstrip("/-_")
+        # Don't treat a metric-category name (e.g. "accuracy" in
+        # "accuracy/top1") as a group prefix.
+        if prefix.lower().replace("_", "-") in _METRIC_STEMS:
+            return ""
+        return prefix
     return ""
 
 

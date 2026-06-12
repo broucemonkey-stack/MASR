@@ -5,6 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from masr.config_parser import extract_params_from_config_text
+from masr.log_parser import extract_best_metrics, extract_epoch_curves, extract_test_metrics
 from masr.models import Experiment
 from masr.parsing import format_key_value_lines, parse_key_value_lines, parse_metrics_text, parse_tags
 from masr.storage import AblationStore
@@ -66,6 +67,89 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
                     st.rerun()
         action_cols[1].caption("会用当前 config.py 的解析结果替换参数，适合修正手动填写造成的截断或混合字段。")
 
+    if experiment.log_file:
+        log_action_cols = st.columns([1, 3])
+        if log_action_cols[0].button("从日志提取最佳指标", key=f"extract_metrics_{experiment.id}"):
+            content = store.read_log_text(project_id, experiment)
+            if content is None:
+                st.error("没有找到训练日志。")
+            else:
+                best_metrics, best_epoch, summary = extract_best_metrics(content)
+                if not best_metrics:
+                    st.warning(summary)
+                else:
+                    experiment.metrics = best_metrics
+                    store.save_experiment(project_id, experiment)
+                    st.success(f"已提取最佳 epoch 指标：{summary}")
+                    st.rerun()
+        log_action_cols[1].caption("用训练日志中验证集最佳 epoch 的指标替换当前 metrics。")
+
+    if experiment.test_log_file:
+        test_log_action_cols = st.columns([1, 3])
+        if test_log_action_cols[0].button("从测试日志提取指标", key=f"extract_test_metrics_{experiment.id}"):
+            content = store.read_test_log_text(project_id, experiment)
+            if content is None:
+                st.error("没有找到测试日志。")
+            else:
+                test_metrics = extract_test_metrics(content)
+                if not test_metrics:
+                    st.warning("未在测试日志中找到测试指标。")
+                else:
+                    experiment.metrics = {**experiment.metrics, **test_metrics}
+                    experiment.test_metrics = {}
+                    store.save_experiment(project_id, experiment)
+                    summary = ", ".join(f"{k} = {v:.4f}" if isinstance(v, float) else f"{k} = {v}" for k, v in sorted(test_metrics.items()))
+                    st.success(f"已提取测试指标：{summary}")
+                    st.rerun()
+        test_log_action_cols[1].caption("用测试日志中的 Epoch(test) 指标合并到结果指标。")
+
+    if experiment.log_file:
+        show_curves = st.checkbox(
+            "查看训练曲线",
+            key=f"show_curves_{experiment.id}",
+            help="从训练日志中提取所有 epoch 的验证集和训练集指标并绘制曲线图。悬停即可查看数值。",
+        )
+        if show_curves:
+            content = store.read_log_text(project_id, experiment)
+            if content is None:
+                st.error("没有找到训练日志。")
+            else:
+                curves = extract_epoch_curves(content)
+                if not curves or len(curves) <= 1:
+                    st.warning("未能从日志中提取到 epoch 级别的指标。")
+                else:
+                    metric_keys = [k for k in curves.keys() if k != "epoch"]
+                    # 默认选中所有可用指标。
+                    default_metrics = list(metric_keys)
+                    selected = st.multiselect(
+                        "选择要显示的指标",
+                        options=metric_keys,
+                        default=default_metrics,
+                        key=f"curve_metrics_{experiment.id}",
+                    )
+                    if selected:
+                        import plotly.graph_objects as go
+
+                        fig = go.Figure()
+                        for key in selected:
+                            fig.add_trace(go.Scatter(
+                                x=curves["epoch"],
+                                y=curves[key],
+                                mode="lines+markers",
+                                name=key,
+                                hovertemplate="%{y:.4f}<extra>%{fullData.name}</extra>",
+                            ))
+                        fig.update_layout(
+                            xaxis_title="Epoch",
+                            yaxis_title="指标值",
+                            hovermode="x unified",
+                            hoverdistance=20,
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                            margin=dict(l=20, r=20, t=10, b=30),
+                            height=450,
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
     with st.form(f"experiment_edit_form_{experiment.id}", clear_on_submit=False):
         left, right = st.columns(2)
         with left:
@@ -92,6 +176,12 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
                 accept_multiple_files=False,
                 key=f"edit_log_{experiment.id}",
             )
+            test_log_file = st.file_uploader(
+                "上传测试日志",
+                type=["log", "txt"],
+                accept_multiple_files=False,
+                key=f"edit_test_log_{experiment.id}",
+            )
             rebuild_from_new_config = st.checkbox(
                 "用新配置文件重建参数",
                 value=True,
@@ -112,12 +202,13 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
             key=f"edit_params_{experiment.id}",
             help="每行一个 key=value，支持数字、布尔值、列表和字典。",
         )
+        all_metrics = {**experiment.metrics, **experiment.test_metrics}
         metrics_text = st.text_area(
             "结果指标",
-            value=format_key_value_lines(experiment.metrics),
-            height=150,
+            value=format_key_value_lines(all_metrics),
+            height=200,
             key=f"edit_metrics_{experiment.id}",
-            help="每行一个 key=value。数字指标可以在对比页进行范围筛选。",
+            help="每行一个 key=value，验证集和测试集指标统一存放。数字指标可以在对比页进行范围筛选。",
         )
 
         image_updates: list[tuple[int, str, str, bool]] = []
@@ -177,6 +268,8 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
             st.error("请填写实验名称。")
             return
 
+        auto_extracted_test = False
+        auto_extract_warning = ""
         config_bytes = config_file.getvalue() if config_file is not None else None
         if config_bytes is not None and rebuild_from_new_config:
             try:
@@ -196,6 +289,7 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
         experiment.seed = seed.strip()
         experiment.params = params
         experiment.metrics = parse_metrics_text(metrics_text)
+        experiment.test_metrics = {}
 
         if config_file is not None:
             filename, original_name = store.save_config_file(
@@ -217,6 +311,32 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
             )
             experiment.log_file = filename
             experiment.log_original_name = original_name
+
+        if test_log_file is not None:
+            test_log_bytes = test_log_file.getvalue()
+            filename, original_name = store.save_test_log_file(
+                project_id,
+                experiment.id,
+                test_log_file.name,
+                test_log_bytes or b"",
+            )
+            experiment.test_log_file = filename
+            experiment.test_log_original_name = original_name
+            # 自动从上传的测试日志中提取指标
+            if test_log_bytes:
+                try:
+                    test_content = test_log_bytes.decode("utf-8", errors="replace")
+                    extracted = extract_test_metrics(test_content)
+                    if extracted:
+                        experiment.metrics = {**experiment.metrics, **extracted}
+                        experiment.test_metrics = {}
+                        auto_extracted_test = True
+                    else:
+                        auto_extract_warning = "未在测试日志中找到 Epoch(test) 指标，请确认日志格式。"
+                except Exception as exc:
+                    auto_extract_warning = f"测试日志解析失败：{exc}"
+            else:
+                auto_extract_warning = "测试日志文件为空。"
 
         retained_images = []
         for index, label, note, remove in image_updates:
@@ -243,7 +363,12 @@ def render_experiment_editor(store: AblationStore, project_id: str, experiment: 
         experiment.images = retained_images
 
         store.save_experiment(project_id, experiment)
-        st.success("实验已更新。")
+        if auto_extract_warning:
+            st.warning(auto_extract_warning)
+        msg = "实验已更新。"
+        if auto_extracted_test:
+            msg += " 已自动从测试日志提取指标。"
+        st.success(msg)
         st.rerun()
 
     cols = st.columns([3, 1])

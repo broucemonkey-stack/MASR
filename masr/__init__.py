@@ -10,6 +10,7 @@ from .config_parser import (
     register_parser,
 )
 from .image_utils import generate_thumbnail
+from .log_parser import extract_best_metrics, extract_epoch_curves, extract_test_metrics
 from .models import Experiment, ImageRecord, Project
 from .parsing import (
     format_key_value_lines,
@@ -30,6 +31,9 @@ __all__ = [
     "MMEngineConfigParser",
     "Project",
     "ProjectService",
+    "extract_best_metrics",
+    "extract_epoch_curves",
+    "extract_test_metrics",
     "extract_params_from_config_text",
     "extract_pipeline_summaries",
     "format_key_value_lines",
