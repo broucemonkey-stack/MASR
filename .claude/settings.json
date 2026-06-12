@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Read(//d/Research/projects/MASE/Xhsell传输/ConvnextTiny/**)"
+      "Read(//d/Research/projects/MASE/Xhsell传输/ConvnextTiny/**)",
+      "PowerShell(Get-ChildItem -Path \"d:\\\\Research\\\\projects\\\\MASR\" -Force | Where-Object { $_.PSIsContainer } | ForEach-Object { $_.Name })",
+      "PowerShell(Get-ChildItem -Path \"d:\\\\Research\\\\projects\\\\MASR\\\\data\\\\projects\" -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } | ForEach-Object { $_.Name })"
     ]
   }
 }
